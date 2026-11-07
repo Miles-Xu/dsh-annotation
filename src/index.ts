@@ -2,7 +2,7 @@
 // 真实功能在 client.js（浏览器 bundle），经 dsh.client 声明接入 dsh web。
 // 这里是干净构建入口 src/index.ts → lib/index.js（tsc，零运行时依赖）。
 
-export const name = 'dsh-annotation'
+export const name = 'dsh-annotation-strict'
 
 export function apply(): void {}
 

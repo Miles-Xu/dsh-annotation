@@ -1,4 +1,6 @@
-# dsh-annotation
+# dsh-annotation-strict
+
+> **本仓库是本地 fork**：`dsh-annotation-strict` 基于 [omdsh-dev/dsh-annotation](https://github.com/omdsh-dev/dsh-annotation) 1.4.11（MIT），改了包名以避免和 npm 原版同时安装时冲突。相对上游修了**发送回显闪烁、浅色主题对比度、触屏打开/关闭**，并移除了**漏答提示 + 追问**（误报多、用户自己看得出来）。完整改动、更新与回滚方法见 **[FORK.md](./FORK.md)**。
 
 <div align="center">
 
@@ -33,9 +35,9 @@
 | 跨回合收集 | 任意多条批注跨消息/回合累积，编号从 1 开始 |
 | 「批注 ×N」标签 | 输入框旁小标签，悬浮显示全部批注内容，可逐条删除 |
 | 回车随消息发送 | 批注块 + 输入框问题一起发给模型（模型收到完整内容） |
-| 气泡隐藏批注块 | 发送瞬间（浏览器绘制前）批注块从气泡 DOM 隐藏，只留问题 + 「批注 ×N」标签，hover 可见内容；刷新后历史消息自动修复 |
+| 气泡隐藏批注块 | 持久消息和本地发送回显都在浏览器绘制前切掉批注块，只留问题 + 「批注 ×N」标签；发送瞬间不再闪出整段原文，刷新后历史消息自动修复 |
 | 回复逐条对照 | 消息内注入格式指令，模型按「Annotation 1：…」…「Annotation N：…」逐条回应 |
-| 回复批注芯片 | 回复里的「Annotation N：」渲染为可悬浮芯片，hover 显示该批注的原文 + 批注内容 |
+| 回复批注芯片 | 回复里的「Annotation N：」渲染为可悬浮/点击芯片，显示该批注的原文 + 批注内容；不做漏答检查，不再误报 |
 
 ## 交互流
 
@@ -54,50 +56,27 @@
    模型回复：Annotation 1：… Annotation 2：…（可悬浮芯片）
 ```
 
-## 安装（官方 bundle 路径 · 唯一）
+## 安装（本地 fork）
+
+DSH Desktop 用插件管理器「添加插件」→ 填本目录的绝对路径（`/Users/bytedance/dsh-annotation`）。Web profile 用 CLI：
 
 ```sh
-# npm 公开包安装（无需 npm 账号）
-dsh plugin --profile web add @changfenhuang/dsh-annotation
-# 也可以直接从 GitHub 公开源码安装
-dsh plugin --profile web add git+https://github.com/omdsh-dev/dsh-annotation.git
-# 本地路径安装（开发调试）
-cd /path/to/dsh-annotation
-dsh plugin --profile web add .
-# 重启 web —— 见下方「重启 web 服务」
+# 先移除 npm 原版，避免两个批注插件同时加载
+dsh plugin --profile web remove @changfenhuang/dsh-annotation
+
+# 以本地链接方式安装本 fork
+dsh plugin --profile web add link:/Users/bytedance/dsh-annotation
 ```
 
-如果只想把它作为 Node 依赖加入现有项目：
-
-```sh
-npm install @changfenhuang/dsh-annotation
-```
-
-> `npm install` 只添加依赖，不会把插件注册到 DSH；在 DSH 中使用时仍应执行上面的 `dsh plugin add`。
-
-### 从旧 `@omdsh-dev` 包名迁移
-
-如果你在 v1.4.2 之前安装过插件，请先删除旧依赖，再安装改名后的包：
-
-```sh
-dsh plugin --profile web remove @omdsh-dev/dsh-annotation
-dsh plugin --profile web add @changfenhuang/dsh-annotation
-```
-
-如果 `dsh web` 仍然启动失败并提到 `@omdsh-dev/dsh-annotation`，请只删除 `~/.dsh/profiles/web/cordis.patch.yml` 中使用该旧名字的 `dsh-annotation` 登记。插件现在会自行提供 `@changfenhuang/dsh-annotation` 登记。
-
-| 做 | 不做 |
-|----|------|
-| 只 `dsh plugin add` / 只写 `bundles` | **不要**再在 profile/home `cordis.patch.yml` insert 同 id |
+> 直接 `npm install` 只添加 Node 依赖，不会注册插件；DSH 中仍要用插件管理器或 `dsh plugin add`。
 
 自检：
 
 ```sh
-dsh --profile web --dump-config | rg "id: dsh-annotation"   # 必须恰好 1 行
-dsh web --no-open   # 复制输出的一次性令牌地址并在浏览器打开
+dsh --profile web --dump-config | rg "id: dsh-annotation-strict"   # 必须恰好 1 行
 ```
 
-在浏览器控制台执行 `window.__DSH_BOOT__.entries.find(({ id }) => id === '@changfenhuang/dsh-annotation')`，必须返回带 `url` 的登记；dsh 0.1.2 起不再开放旧版单插件裸地址。
+浏览器控制台：`window.__DSH_BOOT__.entries.find(({ id }) => id === 'dsh-annotation-strict')` 应返回带 `url` 的登记。
 
 ## 重启 web 服务
 
@@ -141,6 +120,8 @@ systemctl --user restart dsh-web
 
 | 版本 | 内容 |
 |---|---|
+| v1.4.14-strict.1 | iOS 触摸选择的空锚点：pending 批注刷新后仍显示高亮（#89） |
+| v1.4.13-strict.1 | 发送回显（data-submission-echo）绘制前装饰，消掉 JSON 闪屏；移除漏答提示/追问；浅色主题 token、触屏点击开关、点击外部关闭 |
 | v1.4.x | 语言跟随：zh/en UI 文案与批注协议块，经 DSH `locale` 服务实时切换 |
 | v1.3.x | 回复逐条对照：格式指令注入 + 「Annotation N：」可悬浮芯片（TreeWalker 快照修复） |
 | v1.2.x | 气泡隐藏批注块：MutationObserver 微任务零闪烁 + 轮询兜底 + 历史消息修复 |

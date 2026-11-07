@@ -1,4 +1,6 @@
-# dsh-annotation
+# dsh-annotation-strict
+
+> **Local fork.** `dsh-annotation-strict` is based on [omdsh-dev/dsh-annotation](https://github.com/omdsh-dev/dsh-annotation) 1.4.11 (MIT) and renamed so it can coexist with the npm original. It fixes the **send-time echo flash**, the **light-theme contrast**, and **touch open/close**, and removes the **missing-annotation notice + follow-up** (too many false positives). See **[FORK.md](./FORK.md)** for the full change list, update, and rollback procedure.
 
 <div align="center">
 
@@ -33,9 +35,9 @@ Sidebar file annotations (DSH 0.1.6-alpha.1): select plain text, Markdown, or co
 | Cross-turn collection | Any number of annotations accumulate across messages/turns, numbered from 1 |
 | "Annotations ×N" chip | Small chip beside the input box; hover shows every annotation, deletable individually |
 | Enter sends with your message | Annotation block + the question in the input box are sent to the model together (the model receives the full content) |
-| Hidden in your bubble | The annotation block is removed from your bubble's DOM the moment you send (before the browser paints), leaving only the question + the chip (hover to view); historical messages self-heal after a refresh |
+| Hidden in your bubble | Durable messages and the local submission echo (`data-submission-echo`) are cleaned before the browser paints, leaving only the question + the chip; no raw JSON flash on send, historical messages self-heal after a refresh |
 | Numbered reply correspondence | A format instruction is injected into the message so the model replies `Annotation 1: …` … `Annotation N: …` one by one |
-| Reply annotation chips | `Annotation N:` in the reply renders as hoverable chips showing the passage + your note |
+| Reply annotation chips | `Annotation N:` in the reply renders as hoverable/clickable chips showing the passage + your note; no missing-annotation check or false alarm |
 
 ## Interaction flow
 
@@ -54,50 +56,27 @@ Select assistant text ──▶ Toolbar "Annotate" ──▶ Write note / save e
     Model reply: Annotation 1: … Annotation 2: … (hoverable chips)
 ```
 
-## Install (official bundle path · the only one)
+## Install (local fork)
+
+DSH Desktop: open the plugin manager, choose "Add plugin", and enter this directory's absolute path (`/Users/bytedance/dsh-annotation`). For the Web profile use the CLI:
 
 ```sh
-# Public npm package (works without an npm account)
-dsh plugin --profile web add @changfenhuang/dsh-annotation
-# Or install directly from the public GitHub source
-dsh plugin --profile web add git+https://github.com/omdsh-dev/dsh-annotation.git
-# local path install (development / debugging)
-cd /path/to/dsh-annotation
-dsh plugin --profile web add .
-# restart the web service — see "Restarting the web service" below
+# Remove the npm original first so two annotation plugins don't load together
+dsh plugin --profile web remove @changfenhuang/dsh-annotation
+
+# Install this fork as a local link
+dsh plugin --profile web add link:/Users/bytedance/dsh-annotation
 ```
 
-To add it only as a Node dependency in an existing project:
-
-```sh
-npm install @changfenhuang/dsh-annotation
-```
-
-> `npm install` only adds the dependency; it does not register the plugin with DSH. Use `dsh plugin add` above when installing it into DSH.
-
-### Migrating from the old `@omdsh-dev` package name
-
-If you installed the plugin before v1.4.2, remove the old dependency before installing the renamed package:
-
-```sh
-dsh plugin --profile web remove @omdsh-dev/dsh-annotation
-dsh plugin --profile web add @changfenhuang/dsh-annotation
-```
-
-If `dsh web` still fails and mentions `@omdsh-dev/dsh-annotation`, remove only the stale `dsh-annotation` entry that uses that old name from `~/.dsh/profiles/web/cordis.patch.yml`. The plugin now supplies the `@changfenhuang/dsh-annotation` entry itself.
-
-| Do | Don't |
-|----|------|
-| Only `dsh plugin add` / only write `bundles` | **Never** insert the same id again in the profile/home `cordis.patch.yml` |
+> `npm install` only adds a Node dependency; it does not register the plugin with DSH. Use the plugin manager or `dsh plugin add` above.
 
 Self-check:
 
 ```sh
-dsh --profile web --dump-config | rg "id: dsh-annotation"   # must be exactly 1 line
-dsh web --no-open   # open the printed one-time token URL in a browser
+dsh --profile web --dump-config | rg "id: dsh-annotation-strict"   # must be exactly 1 line
 ```
 
-In the browser console, `window.__DSH_BOOT__.entries.find(({ id }) => id === '@changfenhuang/dsh-annotation')` must return an entry with a `url`. dsh 0.1.2 no longer exposes the old bare per-plugin URL.
+In the browser console, `window.__DSH_BOOT__.entries.find(({ id }) => id === 'dsh-annotation-strict')` must return an entry with a `url`.
 
 ## Restarting the web service
 
@@ -141,6 +120,8 @@ Environments without a service manager (e.g. some containers) often need **no re
 
 | Version | Highlights |
 |---|---|
+| v1.4.14-strict.1 | Empty-anchor touch selections keep their highlight after reload (#89) |
+| v1.4.13-strict.1 | Pre-paint decoration of the submission echo (kills the raw-JSON flash); removes the missing-annotation notice/follow-up; light-theme tokens, touch click toggle, outside-click close |
 | v1.4.x | Locale-aware: zh/en UI copy and annotation protocol block, live switch via DSH `locale` service |
 | v1.3.x | Numbered reply correspondence: format-instruction injection + hoverable `Annotation N:` chips (TreeWalker snapshot fix) |
 | v1.2.x | Hidden annotation block in bubble: MutationObserver microtask zero-flicker + polling fallback + historical-message repair |

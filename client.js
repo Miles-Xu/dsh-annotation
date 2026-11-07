@@ -13,14 +13,16 @@
 //   4. 回车发送：capture 阶段拦截 Enter（IME 守卫对齐官方 InputBar：isComposing /
 //      keyCode 229 + compositionend 后短延迟 latch）→ 批注块 prepend 进草稿
 //      （setDraft，不覆盖用户文字）→ composer 正常提交
-//   5. 用户气泡不显示批注块：MutationObserver 微任务阶段（绘制前）按最后一个
-//      「提问：」切掉批注块、贴「批注 ×N」标签（hover 可见）；1s 轮询兜底 +
-//      历史消息自动修复（用户气泡是 MessageText 单文本节点，非 markdown）
+//   5. 用户气泡不显示批注块：持久消息和本地发送回显（data-submission-echo）
+//      都在 MutationObserver 微任务阶段（绘制前）切掉批注块、贴「批注 ×N」
+//      标签；普通回显以前完全没被扫描，是发送瞬间闪出整段原文的根因。
+//      1s 轮询兜底 + 历史消息自动修复（用户气泡是 MessageText 单文本节点）
 //   6. 回复逐条对照：批注块末尾注入格式指令，模型按「Annotation N：…」逐条
 //      回应；回复渲染完成（data-streaming 移除）后把「Annotation N：」替换为
 //      可悬浮芯片（数据取最近一条带标签用户消息的 tag.__annotationItems，刷新
 //      自动重建；改 DOM 前先快照 TreeWalker 收集的文本节点再逐个替换，遍历
-//      中途 replaceChild 会让 walker 指针失效）
+//      中途 replaceChild 会让 walker 指针失效）。不做漏答检查、不弹追问：
+//      是否回应由用户自己看，避免「旧批注算到本轮」的误报。
 //   7. 语言跟随 DSH locale 服务（v1.4）：UI 文案与协议块 zh/en/ru 三语、实时切换，
 //      隐藏手术与反解析同时兼容「提问：」/「Ask:」/「Вопрос:」与「问题：」老格式；
 //      zh/en 之外的未知语言（fr、de…）走英文，绝不退回中文
@@ -47,8 +49,8 @@
 // 同时覆盖两种视图结构（见 assistantRows / allMessageRows / assistantRowOf）。
 window.__ModuleLoader__.load({
   // 必须与 package.json "name" 完全一致，否则 client-modules 报：
-  // bundle loaded without registering "@changfenhuang/dsh-annotation"
-  id: '@changfenhuang/dsh-annotation',
+  // bundle loaded without registering "dsh-annotation-strict"
+  id: 'dsh-annotation-strict',
   factory: (require) => {
     'use strict'
     var module = { exports: {} }
@@ -64,8 +66,8 @@ window.__ModuleLoader__.load({
         '[data-annotation-for-dsh] * { box-sizing: border-box; }',
         '.dsh-ann-bar { position: fixed; z-index: 1200; display: flex; align-items: center;',
         '  gap: 2px; padding: 4px; border-radius: 12px;',
-        '  border: 1px solid var(--dsw-alias-border-inverted);',
-        '  background: var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));',
+        '  border: 1px solid var(--dsw-alias-border-l3);',
+        '  background: var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2, #2c2c2e));',
         '  box-shadow: var(--dsw-shadow-lv3);',
         '  font-family: var(--dsw-font-family, system-ui);',
         '  animation: dsh-ann-pop .12s var(--ds-ease-in-out, ease); }',
@@ -78,18 +80,6 @@ window.__ModuleLoader__.load({
         '.dsh-ann-ghost:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }',
         '.dsh-ann-ghost:disabled { opacity: .45; cursor: default; }',
         '.dsh-ann-ghost svg { width: 14px; height: 14px; }',
-        '.dsh-ann-unanswered { display: flex; align-items: center; gap: 10px; margin-top: 10px;',
-        '  padding: 8px 10px; border-radius: 8px; width: fit-content; max-width: 100%;',
-        '  border: 1px solid var(--dsw-alias-state-warning-primary, #f5a623);',
-        '  background: var(--dsw-alias-bg-layer-1);',
-        '  color: var(--dsw-alias-label-secondary); font-family: var(--dsw-font-family, system-ui);',
-        '  font-size: 12px; line-height: 18px; }',
-        '.dsh-ann-nudge { flex: none; height: 24px; padding: 0 10px; border-radius: 12px;',
-        '  border: 1px solid var(--dsw-alias-border-inverted);',
-        '  background: var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));',
-        '  color: var(--dsw-alias-text-accent, #4c9aff); font-family: inherit; font-size: 12px;',
-        '  cursor: pointer; }',
-        '.dsh-ann-nudge:hover { background: var(--dsw-alias-interactive-bg-hover); }',
         '.dsh-ann-action { display: inline-flex; align-items: center; gap: 5px; height: 28px;',
         '  padding: 0 12px; border: none; border-radius: 14px;',
         '  background: var(--dsw-alias-button-primary-fill);',
@@ -106,8 +96,8 @@ window.__ModuleLoader__.load({
         '.dsh-ann-icon svg { width: 14px; height: 14px; }',
         '.dsh-ann-card { position: fixed; z-index: 1201; width: 400px;',
         '  max-width: calc(100vw - 16px); padding: 12px; border-radius: 12px;',
-        '  border: 1px solid var(--dsw-alias-border-inverted);',
-        '  background: var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));',
+        '  border: 1px solid var(--dsw-alias-border-l3);',
+        '  background: var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2, #2c2c2e));',
         '  box-shadow: var(--dsw-shadow-lv3);',
         '  font-family: var(--dsw-font-family, system-ui);',
         '  animation: dsh-ann-pop .12s var(--ds-ease-in-out, ease); }',
@@ -118,18 +108,18 @@ window.__ModuleLoader__.load({
         '.dsh-ann-card-headmain { display: flex; align-items: center; gap: 2px; min-width: 0; }',
         '.dsh-ann-quote { font-size: 12px; line-height: 1.55;',
         '  color: var(--dsw-alias-label-tertiary);',
-        '  border-left: 2px solid var(--dsw-alias-border-inverted);',
-        '  background: var(--dsw-alias-bg-layer-1);',
+        '  border-left: 2px solid var(--dsw-alias-border-l4, var(--dsw-alias-border-l3));',
+        '  background: var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1));',
         '  border-radius: 0 8px 8px 0; padding: 6px 10px; margin-bottom: 8px;',
         '  max-height: 72px; overflow: hidden; word-break: break-word;',
         '  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }',
         '.dsh-ann-quotes { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px;',
         '  max-height: 150px; overflow-y: auto; }',
         '.dsh-ann-qitem { display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px;',
-        '  border-radius: 8px; background: var(--dsw-alias-bg-layer-1); }',
+        '  border-radius: 8px; background: var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-1)); }',
         '.dsh-ann-qnum { flex: none; display: inline-flex; align-items: center; justify-content: center;',
         '  width: 16px; height: 16px; margin-top: 1px; border-radius: 8px;',
-        '  background: var(--dsw-alias-text-accent, #4c9aff); color: #fff;',
+        '  background: var(--dsw-alias-brand-primary, #4c9aff); color: #fff;',
         '  font-size: 10px; font-weight: 700; }',
         '.dsh-ann-qbody { flex: 1; min-width: 0; }',
         '.dsh-ann-qtext { font-size: 12px; line-height: 1.5;',
@@ -151,8 +141,8 @@ window.__ModuleLoader__.load({
         '  background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary);',
         '  font-family: inherit; font-size: 13px; line-height: 20px;',
         '  outline: none; resize: vertical; transition: border-color .15s ease; }',
-        '.dsh-ann-input:focus { border-color: var(--dsw-alias-text-accent, #4c9aff); }',
-        '.dsh-ann-input::placeholder { color: var(--dsw-alias-label-dimmed); }',
+        '.dsh-ann-input:focus { border-color: var(--dsw-alias-brand-primary, #4c9aff); }',
+        '.dsh-ann-input::placeholder { color: var(--dsw-alias-label-tertiary); }',
         '.dsh-ann-row { display: flex; gap: 8px; margin-top: 10px; justify-content: flex-end; }',
         '.dsh-ann-error { color: var(--dsw-alias-state-error-primary, #ff7a7a);',
         '  font-size: 12px; margin-top: 8px; word-break: break-word; }',
@@ -161,7 +151,7 @@ window.__ModuleLoader__.load({
         '.dsh-ann-num { position: fixed; z-index: 940; display: inline-flex; align-items: center;',
         '  justify-content: center; min-width: 16px; height: 16px; padding: 0 4px;',
         '  border-radius: 8px; border: 1px solid rgba(255, 255, 255, .3);',
-        '  background: var(--dsw-alias-text-accent, #4c9aff); color: #fff;',
+        '  background: var(--dsw-alias-brand-primary, #4c9aff); color: #fff;',
         '  font-family: var(--dsw-font-family, system-ui); font-size: 10px; font-weight: 700;',
         '  box-shadow: 0 1px 4px rgba(0,0,0,.35); pointer-events: auto; cursor: pointer;',
         '  transition: filter .12s ease; visibility: visible; }',
@@ -203,9 +193,6 @@ window.__ModuleLoader__.load({
         reply: {
           headWithQuote: '批注 {n} 的原文',
           notePrefix: '你的批注：',
-          unanswered: '还有 {n} 条批注未按编号回应：第 {list} 条',
-          nudge: '追问',
-          nudgePrompt: '你在上一条回复中没有按编号回应这些批注：第 {list} 条。请用「Annotation N：…」的格式逐条补充回答，不要重复已经回答过的内容。',
         },
         toast: {
           attachFail: '批注拼稿失败，消息将不带批注发送：',
@@ -243,9 +230,6 @@ window.__ModuleLoader__.load({
         reply: {
           headWithQuote: 'Source of annotation {n}',
           notePrefix: 'Your note: ',
-          unanswered: '{n} annotation(s) were not answered by number: {list}',
-          nudge: 'Ask again',
-          nudgePrompt: 'Your previous reply did not answer these annotations by number: {list}. Please answer each of them in the "Annotation N: …" format, without repeating what you already covered.',
         },
         toast: {
           attachFail: 'Failed to attach annotations; the message will be sent without them: ',
@@ -286,9 +270,6 @@ window.__ModuleLoader__.load({
           headNoQuote: 'Аннотация {n}',
           notePrefix: 'Ваше примечание: ',
           missing: '(подходящая аннотация не найдена)',
-          unanswered: 'Не отвечено по номерам: {n} (аннотации {list})',
-          nudge: 'Уточнить',
-          nudgePrompt: 'В предыдущем ответе не были отвечены по номерам эти аннотации: {list}. Ответьте на каждую в формате «Annotation N: …», не повторяя уже сказанное.',
         },
         toast: {
           attachFail: 'Не удалось собрать аннотации; сообщение уйдёт без них: ',
@@ -847,6 +828,11 @@ window.__ModuleLoader__.load({
       var ctx = saved !== undefined && saved !== null
         ? { before: saved.ctxBefore || '', after: saved.ctxAfter || '' }
         : null
+      // #89：真实触摸选择（iOS Safari）可能拿到全空锚点。此时 ctx 不是 null，
+      // 而是 {before:'', after:''}，ctxScore 恒为 0；旧判据 `bestScore > 0` 会把
+      // 已经找到的精确文本匹配丢掉，高亮整段消失。空上下文时接受精确匹配。
+      var noCtx = ctx === null
+        || (saved.ctxBefore === '' && saved.ctxAfter === '')
       var best = null
       var bestScore = -1
       for (var i = 0; i < rows.length; i++) {
@@ -859,7 +845,7 @@ window.__ModuleLoader__.load({
           if (score > bestScore) { bestScore = score; best = range }
         }
       }
-      if (best !== null && (ctx === null || bestScore > 0)) return best
+      if (best !== null && (noCtx || bestScore > 0)) return best
       var flow = document.querySelector('[data-chat-flow]')
       if (flow === null) flow = document.querySelector('[data-focus-flow]')
       if (flow !== null) {
@@ -873,7 +859,7 @@ window.__ModuleLoader__.load({
           var score2 = ctxScore(full2, positions2[q2], quote.length, ctx)
           if (score2 > bestScore2) { bestScore2 = score2; best2 = range2 }
         }
-        if (best2 !== null && (ctx === null || bestScore2 > 0)) return best2
+        if (best2 !== null && (noCtx || bestScore2 > 0)) return best2
       }
       return null
     }
@@ -1189,7 +1175,7 @@ window.__ModuleLoader__.load({
           var el = document.createElement('div')
           el.setAttribute('data-annotation-toast', '')
           el.textContent = msg
-          el.style.cssText = 'position:fixed;z-index:1300;left:50%;bottom:88px;transform:translateX(-50%);max-width:min(420px,calc(100vw - 24px));padding:8px 14px;border-radius:10px;background:var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));border:1px solid var(--dsw-alias-border-inverted);box-shadow:var(--dsw-shadow-lv3);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family,system-ui);font-size:12px;pointer-events:none;'
+          el.style.cssText = 'position:fixed;z-index:1300;left:50%;bottom:88px;transform:translateX(-50%);max-width:min(420px,calc(100vw - 24px));padding:8px 14px;border-radius:10px;background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2, #2c2c2e));border:1px solid var(--dsw-alias-border-l3);box-shadow:var(--dsw-shadow-lv3);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family,system-ui);font-size:12px;pointer-events:none;'
           document.body.appendChild(el)
           if (toastTimer !== null) clearTimeout(toastTimer)
           toastTimer = setTimeout(function () {
@@ -1296,12 +1282,36 @@ window.__ModuleLoader__.load({
       var anchorRaf = false
       var lostSince = 0
       var ANCHOR_LOST_MS = 1000
+      // 有些宿主列表用 transform / 虚拟滚动搬运内容，不产生可捕获的 scroll
+      // 事件；只靠 scroll 监听时高亮会停在上一帧。这里在滚轮/触摸/键盘滚动
+      // 意图出现后短暂开一个 rAF 循环，每帧在 paint 前重算标记，空闲即停。
+      var markerLoopUntil = 0
+      var markerLoopRaf = null
+      function markerLoopTick() {
+        markerLoopRaf = null
+        if (ui.quotes.length === 0 || Date.now() > markerLoopUntil) return
+        renderMarkers()
+        markerLoopRaf = requestAnimationFrame(markerLoopTick)
+      }
+      function kickMarkerLoop(ms) {
+        markerLoopUntil = Date.now() + (ms || 2200)
+        if (markerLoopRaf === null) markerLoopRaf = requestAnimationFrame(markerLoopTick)
+      }
+      function onScrollIntent(e) {
+        if (ui.quotes.length === 0) return
+        if (e !== undefined && e.type === 'keydown') {
+          if (e.target instanceof Element && e.target.closest('[data-composer-card], [data-composer-input]')) return
+          if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown' && e.key !== 'PageUp'
+            && e.key !== 'PageDown' && e.key !== 'Home' && e.key !== 'End') return
+        }
+        kickMarkerLoop()
+      }
       function onLayoutChange() {
         // #82：滚动事件必须在本帧 paint 前把 fixed 高亮挪到新位置。以前这里
         // 统一丢给 rAF，Chromium 的 scroll 事件晚于该帧 rAF 阶段，paint 会用
         // 上一帧坐标（实测一帧最多差 ~90px）。标记重算放在 rAF 之前同步做，
         // 其余 UI 定位仍然走 rAF 合并。
-        if (ui.quotes.length > 0) renderMarkers()
+        if (ui.quotes.length > 0) { renderMarkers(); kickMarkerLoop() }
         if (anchorRaf) return
         anchorRaf = true
         requestAnimationFrame(function () {
@@ -1343,6 +1353,9 @@ window.__ModuleLoader__.load({
       }
       window.addEventListener('scroll', onLayoutChange, true)
       window.addEventListener('resize', onLayoutChange)
+      window.addEventListener('wheel', onScrollIntent, { capture: true, passive: true })
+      window.addEventListener('touchmove', onScrollIntent, { capture: true, passive: true })
+      window.addEventListener('keydown', onScrollIntent, true)
 
       function mutationRelevant(mutations) {
         for (var i = 0; i < mutations.length; i++) {
@@ -2163,7 +2176,7 @@ window.__ModuleLoader__.load({
       // ---------- 输入框旁的批注标签（N 条批注 · 悬浮看全部内容） ----------
       var chipLayer = document.createElement('div')
       chipLayer.setAttribute('data-annotation-chip', '')
-      chipLayer.style.cssText = 'position:fixed;z-index:1150;display:none;align-items:center;gap:4px;height:22px;padding:0 10px;border-radius:11px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:11px;color:var(--dsw-alias-label-primary);cursor:default;animation:dsh-ann-pop .12s var(--ds-ease-in-out, ease);'
+      chipLayer.style.cssText = 'position:fixed;z-index:1150;display:none;align-items:center;gap:4px;height:22px;padding:0 10px;border-radius:11px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2, #2c2c2e));box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:11px;color:var(--dsw-alias-label-primary);cursor:pointer;animation:dsh-ann-pop .12s var(--ds-ease-in-out, ease);'
       document.body.appendChild(chipLayer)
       var tipLayer = document.createElement('div')
       tipLayer.setAttribute('data-annotation-tip-layer', '')
@@ -2224,7 +2237,7 @@ window.__ModuleLoader__.load({
         }
         chipLayer.textContent = ''
         var b = document.createElement('b')
-        b.style.cssText = 'color:var(--dsw-alias-text-accent,#4c9aff);font-weight:700;'
+        b.style.cssText = 'color:var(--dsw-alias-brand-primary, #4c9aff);font-weight:700;'
         b.textContent = String(ui.quotes.length)
         chipLayer.appendChild(b)
         chipLayer.appendChild(document.createTextNode(plural('chip.count', ui.quotes.length)))
@@ -2329,12 +2342,32 @@ window.__ModuleLoader__.load({
         tipActiveHide = { keep: cancelHide, hide: function () { scheduleHide(chipLayer) } }
       })
       chipLayer.addEventListener('mouseleave', function () { scheduleHide(chipLayer) })
+      // 触屏没有 mouseleave：点一下打开，再点一下关闭；点外部也关闭。
+      // 鼠标点击时面板通常已由 hover 打开，点击只负责固定住，不再抖一次。
+      chipLayer.addEventListener('click', function (e) {
+        if (tipOwner === chipLayer) {
+          if (e.pointerType === 'mouse') return
+          releaseActiveTip()
+          clearTip(chipLayer)
+          return
+        }
+        showChipTip()
+      })
+      function closeTipFromOutside(e) {
+        if (tipOwner === null) return
+        var target = e.target
+        if (tipLayer.contains(target)) return
+        if (typeof tipOwner.contains === 'function' && tipOwner.contains(target)) return
+        releaseActiveTip()
+        clearTip()
+      }
+      document.addEventListener('pointerdown', closeTipFromOutside, true)
 
       function showChipTip() {
         if (ui.quotes.length === 0) return
         var el = document.createElement('div')
         el.className = 'dsh-ann-tip'
-        el.style.cssText = 'position:fixed;z-index:1160;box-sizing:border-box;width:300px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
+        el.style.cssText = 'position:fixed;z-index:1160;box-sizing:border-box;width:300px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2, #2c2c2e));box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
         var head = document.createElement('div')
         head.style.cssText = 'font-weight:600;margin-bottom:6px;'
         head.textContent = t('tip.title', { n: ui.quotes.length })
@@ -2342,9 +2375,9 @@ window.__ModuleLoader__.load({
         for (var i = 0; i < ui.quotes.length; i++) {
           var q = ui.quotes[i]
           var item = document.createElement('div')
-          item.style.cssText = 'padding:6px 0;border-top:1px solid var(--dsw-alias-border-strong,#444);'
+          item.style.cssText = 'padding:6px 0;border-top:1px solid var(--dsw-alias-border-l2);'
           var num = document.createElement('span')
-          num.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;margin-right:6px;border-radius:8px;background:var(--dsw-alias-text-accent,#4c9aff);color:#fff;font-size:10px;font-weight:700;'
+          num.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;margin-right:6px;border-radius:8px;background:var(--dsw-alias-brand-primary, #4c9aff);color:#fff;font-size:10px;font-weight:700;'
           num.textContent = String(i + 1)
           var body = document.createElement('span')
           body.style.cssText = 'font-size:11px;line-height:1.5;color:var(--dsw-alias-label-tertiary);'
@@ -2434,6 +2467,8 @@ window.__ModuleLoader__.load({
               updateChip()
               renderMarkers()
               pendingDeco.push({ items: sentItems })
+              // 发送后旧标签的悬浮面板可能盖住新消息，先收掉再装饰。
+              clearTip()
               kickDecorate()
             }
           })
@@ -2557,29 +2592,58 @@ window.__ModuleLoader__.load({
         } catch (_) { return [] }
       }
 
+      /** 消息行的稳定标识：虚拟滚动复用 DOM 后，靠它识别标签是否还属于本行。 */
+      function rowKeyOf(row) {
+        if (row === null || typeof row.getAttribute !== 'function') return ''
+        return row.getAttribute('data-chat-anchor-key')
+          || row.getAttribute('data-chat-flow-key')
+          || row.getAttribute('data-chat-node-key')
+          || ''
+      }
+
+      /** 宿主复用行 DOM 时，旧的批注标签会留在新消息上；钥匙变了就摘掉。 */
+      function pruneStaleTags() {
+        var tags = document.querySelectorAll('[data-annotation-bubble-tag]')
+        for (var i = 0; i < tags.length; i++) {
+          var tag = tags[i]
+          var row = tag.closest('[data-chat-flow-kind]') || tag.parentElement
+          var key = rowKeyOf(row)
+          if (tag.__rowKey && key && tag.__rowKey !== key) tag.remove()
+        }
+        if (tipOwner !== null && typeof tipOwner.isConnected === 'boolean' && !tipOwner.isConnected) clearTip()
+      }
+
       /** 在用户气泡上贴「批注 ×N」标签（hover 显示条目内容）。 */
       function attachBubbleTag(row, items) {
-        if (row.querySelector('[data-annotation-bubble-tag]') !== null) return
+        var existing = row.querySelector('[data-annotation-bubble-tag]')
+        if (existing !== null) {
+          // 行被复用时更新内容；hover 读的是 tag 上的实时数据，不是创建时闭包。
+          existing.__annotationItems = items
+          existing.__rowKey = rowKeyOf(row)
+          existing.textContent = t('bubble.tag', { n: items.length })
+          return
+        }
         var bubble = row.querySelector('[class*="bubble"]') || row
         var tag = document.createElement('span')
         tag.setAttribute('data-annotation-bubble-tag', '')
         tag.textContent = t('bubble.tag', { n: items.length })
-        tag.style.cssText = 'display:inline-flex;align-items:center;height:18px;padding:0 8px;margin:4px 0 0 4px;border-radius:9px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));color:var(--dsw-alias-label-secondary);font-family:var(--dsw-font-family,system-ui);font-size:10px;cursor:default;'
-        ;(function (list) {
-          tag.addEventListener('mouseenter', function () {
+        tag.style.cssText = 'display:inline-flex;align-items:center;height:18px;padding:0 8px;margin:4px 0 0 4px;border-radius:9px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2, #2c2c2e));color:var(--dsw-alias-label-secondary);font-family:var(--dsw-font-family,system-ui);font-size:10px;cursor:pointer;'
+        ;(function () {
+          function openTagTip() {
+            var list = tag.__annotationItems || []
             tipActiveHide = { keep: bubbleKeep, hide: bubbleHide }
             var el = document.createElement('div')
             el.className = 'dsh-ann-tip'
-            el.style.cssText = 'position:fixed;z-index:1160;box-sizing:border-box;width:300px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
+            el.style.cssText = 'position:fixed;z-index:1160;box-sizing:border-box;width:300px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2, #2c2c2e));box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
             var head = document.createElement('div')
             head.style.cssText = 'font-weight:600;margin-bottom:6px;'
             head.textContent = t('bubble.title', { n: list.length })
             el.appendChild(head)
             for (var i = 0; i < list.length; i++) {
               var item = document.createElement('div')
-              item.style.cssText = 'padding:6px 0;border-top:1px solid var(--dsw-alias-border-strong,#444);'
+              item.style.cssText = 'padding:6px 0;border-top:1px solid var(--dsw-alias-border-l2);'
               var num = document.createElement('span')
-              num.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;margin-right:6px;border-radius:8px;background:var(--dsw-alias-text-accent,#4c9aff);color:#fff;font-size:10px;font-weight:700;'
+              num.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;margin-right:6px;border-radius:8px;background:var(--dsw-alias-brand-primary, #4c9aff);color:#fff;font-size:10px;font-weight:700;'
               num.textContent = String(i + 1)
               var body = document.createElement('span')
               body.style.cssText = 'font-size:11px;line-height:1.5;color:var(--dsw-alias-label-tertiary);'
@@ -2604,6 +2668,20 @@ window.__ModuleLoader__.load({
             el.style.left = left + 'px'
             el.style.top = Math.max(8, top) + 'px'
             el.style.width = w2 + 'px'
+          }
+          tag.addEventListener('mouseenter', function () {
+            tipActiveHide = { keep: bubbleKeep, hide: bubbleHide }
+            openTagTip()
+          })
+          tag.addEventListener('click', function (e) {
+            if (tipOwner === tag) {
+              if (e.pointerType === 'mouse') return
+              releaseActiveTip()
+              clearTip(tag)
+              return
+            }
+            tipActiveHide = { keep: bubbleKeep, hide: bubbleHide }
+            openTagTip()
           })
           var bubbleGrace = null
           function bubbleHide() {
@@ -2620,8 +2698,9 @@ window.__ModuleLoader__.load({
           }
           // 只登记关闭钩子，不再往共享 tipLayer 上追加监听器（见 tipActiveHide 注释）
           tag.addEventListener('mouseleave', bubbleHide)
-        })(items)
+        })()
         tag.__annotationItems = items
+        tag.__rowKey = rowKeyOf(row)
         bubble.appendChild(tag)
         console.log('[annotation] 气泡已贴批注标签 ×' + items.length)
       }
@@ -2690,7 +2769,6 @@ window.__ModuleLoader__.load({
           // 一个 hover 只显示「未找到对应批注条目」的占位芯片没有任何价值。
           if (items === null || items.length === 0) continue
           decorateAnnotationLabels(el, items)
-          markUnansweredAnnotations(el, items)
         }
       }
 
@@ -2745,82 +2823,13 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** 1..count 里没有出现在 covered 中的编号（纯函数，便于单测）。 */
-      function missingIndexes(count, covered) {
-        var out = []
-        for (var i = 1; i <= count; i++) {
-          if (covered.indexOf(i) === -1) out.push(i)
-        }
-        return out
-      }
-
-      function listSeparator() {
-        return currentLang === 'zh' ? '、' : ', '
-      }
-
-      /** 只在最新一条助手回复上提示「未按编号回应」的批注，并给一个追问按钮。
-       *  不自动发送：按钮只把追问写进 composer，发不发仍由用户决定。 */
-      function markUnansweredAnnotations(row, items) {
-        if (row.querySelector('[data-annotation-unanswered]') !== null) return
-        var rows = assistantRows()
-        if (rows.length === 0 || rows[rows.length - 1] !== row) return
-        var covered = []
-        var chips = row.querySelectorAll('[data-annotation-reply-chip]')
-        for (var i = 0; i < chips.length; i++) {
-          var idx = parseInt(chips[i].getAttribute('data-annotation-index'), 10)
-          if (!isNaN(idx)) covered.push(idx)
-        }
-        var missing = missingIndexes(items.length, covered)
-        if (missing.length === 0) return
-        var box = document.createElement('div')
-        box.setAttribute('data-annotation-unanswered', '')
-        box.className = 'dsh-ann-unanswered'
-        var label = document.createElement('span')
-        label.textContent = t('reply.unanswered', { n: missing.length, list: missing.join(listSeparator()) })
-        box.appendChild(label)
-        var btn = document.createElement('button')
-        btn.type = 'button'
-        btn.className = 'dsh-ann-nudge'
-        btn.textContent = t('reply.nudge')
-        btn.addEventListener('click', function () { nudgeUnanswered(missing) })
-        box.appendChild(btn)
-        row.appendChild(box)
-      }
-
-      /** 追问里的批注清单：中文用纯编号（配「第 {list} 条」读起来自然），
-       *  其余语言用 Annotation N 标签。 */
-      function nudgeList(missing) {
-        var labels = missing.map(function (n) {
-          return currentLang === 'zh' ? String(n) : 'Annotation ' + n
-        })
-        return labels.join(listSeparator())
-      }
-
-      /** 把「补答未回应批注」的追问写进 composer（不自动发送）。 */
-      function nudgeUnanswered(missing) {
-        var current = readCurrentSessionId()
-        if (current === undefined) { showToast(t('toast.noSession')); return }
-        try {
-          var scoped = sessions.scope(current)
-          if (scoped === undefined) { showToast(t('toast.noSession')); return }
-          var shell = ctx.conversation.input.for(scoped)
-          var draft = (shell.state.getSnapshot().draft || '').trim()
-          var list = nudgeList(missing)
-          var prompt = t('reply.nudgePrompt', { list: list })
-          shell.setDraft(draft === '' ? prompt : draft + '\n\n' + prompt)
-          focusComposer()
-        } catch (err) {
-          console.warn('[annotation] 追问草稿写入失败：', err)
-        }
-      }
-
       /** 构造「Annotation N」芯片（hover 显示该批注的原文与批注内容）。
        *  `item` 必定存在：调用方只在编号能对应到批注条目时才生成芯片。 */
       function makeReplyChip(num, item) {
         var chip = document.createElement('span')
         chip.setAttribute('data-annotation-reply-chip', '')
         chip.setAttribute('data-annotation-index', String(num))
-        chip.style.cssText = 'display:inline-flex;align-items:center;height:18px;padding:0 6px;margin:0 2px;border-radius:9px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));color:var(--dsw-alias-text-accent,#4c9aff);font-family:var(--dsw-font-family,system-ui);font-size:11px;font-weight:600;cursor:default;vertical-align:middle;'
+        chip.style.cssText = 'display:inline-flex;align-items:center;height:18px;padding:0 6px;margin:0 2px;border-radius:9px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2, #2c2c2e));color:var(--dsw-alias-brand-primary, #4c9aff);font-family:var(--dsw-font-family,system-ui);font-size:11px;font-weight:600;cursor:pointer;vertical-align:middle;'
         chip.textContent = 'Annotation ' + num
         var grace = null
         function hide() {
@@ -2835,11 +2844,10 @@ window.__ModuleLoader__.load({
         function keep() {
           if (grace !== null) { clearTimeout(grace); grace = null }
         }
-        chip.addEventListener('mouseenter', function () {
-          tipActiveHide = { keep: keep, hide: hide }
+        function openChipTip() {
           var el = document.createElement('div')
           el.className = 'dsh-ann-tip'
-          el.style.cssText = 'position:fixed;z-index:1160;width:320px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
+          el.style.cssText = 'position:fixed;z-index:1160;width:320px;max-width:calc(100vw - 16px);padding:10px 12px;border-radius:12px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2, #2c2c2e));box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:12px;color:var(--dsw-alias-label-primary);'
           var head = document.createElement('div')
           head.style.cssText = 'font-weight:600;margin-bottom:6px;'
           head.textContent = t('reply.headWithQuote', { n: num })
@@ -2850,7 +2858,7 @@ window.__ModuleLoader__.load({
           el.appendChild(quote)
           if (typeof item.note === 'string' && item.note !== '') {
             var note = document.createElement('div')
-            note.style.cssText = 'font-size:11px;color:var(--dsw-alias-text-accent,#4c9aff);margin-top:6px;word-break:break-word;'
+            note.style.cssText = 'font-size:11px;color:var(--dsw-alias-brand-primary, #4c9aff);margin-top:6px;word-break:break-word;'
             note.textContent = t('reply.notePrefix') + truncate(item.note, 80)
             el.appendChild(note)
           }
@@ -2864,6 +2872,20 @@ window.__ModuleLoader__.load({
           el.style.left = left + 'px'
           el.style.top = Math.max(8, top) + 'px'
           el.style.width = w2 + 'px'
+        }
+        chip.addEventListener('mouseenter', function () {
+          tipActiveHide = { keep: keep, hide: hide }
+          openChipTip()
+        })
+        chip.addEventListener('click', function (e) {
+          if (tipOwner === chip) {
+            if (e.pointerType === 'mouse') return
+            releaseActiveTip()
+            clearTip(chip)
+            return
+          }
+          tipActiveHide = { keep: keep, hide: hide }
+          openChipTip()
         })
         chip.addEventListener('mouseleave', hide)
         return chip
@@ -2912,7 +2934,7 @@ window.__ModuleLoader__.load({
           var tag = document.createElement('span')
           tag.setAttribute('data-annotation-queue-tag', '')
           tag.textContent = t('bubble.tag', { n: count })
-          tag.style.cssText = 'display:inline-flex;align-items:center;height:18px;padding:0 8px;margin-left:6px;border-radius:9px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));color:var(--dsw-alias-label-secondary);font-family:var(--dsw-font-family,system-ui);font-size:10px;'
+          tag.style.cssText = 'display:inline-flex;align-items:center;height:18px;padding:0 8px;margin-left:6px;border-radius:9px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2, #2c2c2e));color:var(--dsw-alias-label-secondary);font-family:var(--dsw-font-family,system-ui);font-size:10px;'
           preview.appendChild(tag)
         }
       }
@@ -2921,12 +2943,12 @@ window.__ModuleLoader__.load({
        *  不依赖发送事件链：异步渲染、刷新后的历史消息都能被覆盖。 */
       function decorateAll() {
         try {
+          pruneStaleTags()
           var rows = allMessageRows()
           for (var i = rows.length - 1; i >= 0; i--) {
             var el = rows[i]
             if (el.hasAttribute('data-pending-steering')) continue
             if (isAssistantRow(el) || isFocusAssistantRow(el)) continue
-            if (el.querySelector('[data-annotation-bubble-tag]') !== null) continue
             // steering / 插队消息不一定有 bubble class，退回整行文本。
             var b = el.querySelector('[class*="bubble"]') || el
             if (!hasAnnotationBlock(b.textContent || '')) continue
@@ -2943,18 +2965,21 @@ window.__ModuleLoader__.load({
             // 清空刚恢复的待发送批注（issue #28 复测）。发送清空的唯一权威是
             // watchInputDraft 的「草稿有→空」迁移，其初始化时序洞由订阅重试补齐。
           }
-          // 插队/steering 的本地 pending echo 自带 data-pending-steering，
-          // 主循环会跳过它；单独扫一遍，否则插队瞬间整段批注块会露出来。
-          var pending = document.querySelectorAll('[data-pending-steering]')
-          for (var pi = 0; pi < pending.length; pi++) {
-            var pe = pending[pi]
-            if (isAssistantRow(pe) || isFocusAssistantRow(pe)) continue
-            if (pe.querySelector('[data-annotation-bubble-tag]') !== null) continue
-            var pb = pe.querySelector('[class*="bubble"]') || pe
-            if (!hasAnnotationBlock(pb.textContent || '')) continue
-            var pitems = parseItemsFromBubble(pe)
-            if (!hideAnnotationBlock(pe)) continue
-            attachBubbleTag(pe, pitems)
+          // 本地回显（普通发送 + 插队/steering）不在 allMessageRows 里：
+          // 普通发送的 echo 只有 data-submission-echo，旧实现完全没扫它，
+          // 所以发送瞬间会先露出整段批注块，等持久消息渲染后才被装饰。
+          // 这里在同一个 MutationObserver 微任务里收掉，早于 paint。
+          var echoes = document.querySelectorAll('[data-submission-echo], [data-pending-steering]')
+          for (var ei = 0; ei < echoes.length; ei++) {
+            var echo = echoes[ei]
+            if (isAssistantRow(echo) || isFocusAssistantRow(echo)) continue
+            if (echo.querySelector('[data-annotation-bubble-tag]') !== null) continue
+            var eb = echo.querySelector('[class*="bubble"]') || echo
+            if (!hasAnnotationBlock(eb.textContent || '')) continue
+            var eitems = parseItemsFromBubble(echo)
+            if (eitems.length === 0) continue
+            if (!hideAnnotationBlock(echo)) continue
+            attachBubbleTag(echo, eitems)
           }
           // 排队 dock 的预览也藏着完整批注块；先收成标签，再处理气泡。
           decorateQueueDock()
@@ -3079,6 +3104,7 @@ window.__ModuleLoader__.load({
         clearSettle()
         document.removeEventListener('selectionchange', onSelection)
         document.removeEventListener('pointerdown', onDocPointerDown, true)
+        document.removeEventListener('pointerdown', closeTipFromOutside, true)
         document.removeEventListener('keydown', onKeyDown, true)
         document.removeEventListener('pointermove', onTipPointerMove, true)
         document.removeEventListener('pointerdown', onSendPointerDown, true)
@@ -3089,6 +3115,10 @@ window.__ModuleLoader__.load({
         if (imeClearTimer !== null) { clearTimeout(imeClearTimer); imeClearTimer = null }
         window.removeEventListener('scroll', onLayoutChange, true)
         window.removeEventListener('resize', onLayoutChange)
+        window.removeEventListener('wheel', onScrollIntent, true)
+        window.removeEventListener('touchmove', onScrollIntent, true)
+        window.removeEventListener('keydown', onScrollIntent, true)
+        if (markerLoopRaf !== null) { cancelAnimationFrame(markerLoopRaf); markerLoopRaf = null }
         host.removeEventListener('pointerdown', onHostPointerDown)
         observer.disconnect()
         if (typeof unsub === 'function') unsub()
@@ -3106,7 +3136,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    exports.name = '@changfenhuang/dsh-annotation'
+    exports.name = 'dsh-annotation-strict'
     exports.inject = ['sessions', 'conversation', 'locale', 'uiSession']
     exports.apply = apply
 

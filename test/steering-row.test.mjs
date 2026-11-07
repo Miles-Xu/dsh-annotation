@@ -11,9 +11,9 @@ test('插队/steering 消息也会隐藏批注块', () => {
   assert.doesNotMatch(decorate, /if \(b === null \|\| !hasAnnotationBlock/, '不能因为拿不到 bubble 就跳过')
 })
 
-test('pending steering echo 也会被单独扫描', () => {
-  assert.match(source, /querySelectorAll\('\[data-pending-steering\]'\)/)
-  assert.match(source, /attachBubbleTag\(pe, pitems\)/)
+test('普通发送回显与 pending steering echo 都会在绘制前扫描', () => {
+  assert.match(source, /querySelectorAll\('\[data-submission-echo\], \[data-pending-steering\]'\)/)
+  assert.match(source, /attachBubbleTag\(echo, eitems\)/)
 })
 
 test('插入带批注块的新节点时同步装饰，避免先闪原文', () => {

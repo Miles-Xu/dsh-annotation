@@ -1,0 +1,167 @@
+diff --git a/client.js b/client.js
+index c8e0c23..edd9daf 100644
+--- a/client.js
++++ b/client.js
+@@ -2062,7 +2062,7 @@ window.__ModuleLoader__.load({
+       // ---------- 输入框旁的批注标签（N 条批注 · 悬浮看全部内容） ----------
+       var chipLayer = document.createElement('div')
+       chipLayer.setAttribute('data-annotation-chip', '')
+-      chipLayer.style.cssText = 'position:fixed;z-index:1150;display:none;align-items:center;gap:4px;height:22px;padding:0 10px;border-radius:11px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:11px;color:var(--dsw-alias-label-primary);cursor:default;animation:dsh-ann-pop .12s var(--ds-ease-in-out, ease);'
++      chipLayer.style.cssText = 'position:fixed;z-index:1150;display:none;align-items:center;gap:4px;height:22px;padding:0 10px;border-radius:11px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));box-shadow:var(--dsw-shadow-lv3);font-family:var(--dsw-font-family,system-ui);font-size:11px;color:var(--dsw-alias-label-primary);cursor:pointer;animation:dsh-ann-pop .12s var(--ds-ease-in-out, ease);'
+       document.body.appendChild(chipLayer)
+       var tipLayer = document.createElement('div')
+       tipLayer.setAttribute('data-annotation-tip-layer', '')
+@@ -2228,6 +2228,25 @@ window.__ModuleLoader__.load({
+         tipActiveHide = { keep: cancelHide, hide: function () { scheduleHide(chipLayer) } }
+       })
+       chipLayer.addEventListener('mouseleave', function () { scheduleHide(chipLayer) })
++      // 触屏没有 mouseleave：点一下打开，再点一下关闭；点外部也关闭。
++      chipLayer.addEventListener('click', function (e) {
++        if (tipOwner === chipLayer) {
++          if (e.pointerType === 'mouse') return
++          releaseActiveTip()
++          clearTip(chipLayer)
++          return
++        }
++        showChipTip()
++      })
++      function closeTipFromOutside(e) {
++        if (tipOwner === null) return
++        var target = e.target
++        if (tipLayer.contains(target)) return
++        if (typeof tipOwner.contains === 'function' && tipOwner.contains(target)) return
++        releaseActiveTip()
++        clearTip()
++      }
++      document.addEventListener('pointerdown', closeTipFromOutside, true)
+ 
+       function showChipTip() {
+         if (ui.quotes.length === 0) return
+@@ -2463,7 +2482,7 @@ window.__ModuleLoader__.load({
+         var tag = document.createElement('span')
+         tag.setAttribute('data-annotation-bubble-tag', '')
+         tag.textContent = t('bubble.tag', { n: items.length })
+-        tag.style.cssText = 'display:inline-flex;align-items:center;height:18px;padding:0 8px;margin:4px 0 0 4px;border-radius:9px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));color:var(--dsw-alias-label-secondary);font-family:var(--dsw-font-family,system-ui);font-size:10px;cursor:default;'
++        tag.style.cssText = 'display:inline-flex;align-items:center;height:18px;padding:0 8px;margin:4px 0 0 4px;border-radius:9px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));color:var(--dsw-alias-label-secondary);font-family:var(--dsw-font-family,system-ui);font-size:10px;cursor:pointer;'
+         ;(function (list) {
+           tag.addEventListener('mouseenter', function () {
+             tipActiveHide = { keep: bubbleKeep, hide: bubbleHide }
+@@ -2518,6 +2537,15 @@ window.__ModuleLoader__.load({
+             if (bubbleGrace !== null) { clearTimeout(bubbleGrace); bubbleGrace = null }
+           }
+           // 只登记关闭钩子，不再往共享 tipLayer 上追加监听器（见 tipActiveHide 注释）
++          tag.addEventListener('click', function (e) {
++            if (tipOwner === tag) {
++              if (e.pointerType === 'mouse') return
++              releaseActiveTip()
++              clearTip(tag)
++              return
++            }
++            tag.dispatchEvent(new MouseEvent('mouseenter'))
++          })
+           tag.addEventListener('mouseleave', bubbleHide)
+         })(items)
+         tag.__annotationItems = items
+@@ -2640,7 +2668,7 @@ window.__ModuleLoader__.load({
+       function makeReplyChip(num, item) {
+         var chip = document.createElement('span')
+         chip.setAttribute('data-annotation-reply-chip', '')
+-        chip.style.cssText = 'display:inline-flex;align-items:center;height:18px;padding:0 6px;margin:0 2px;border-radius:9px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));color:var(--dsw-alias-text-accent,#4c9aff);font-family:var(--dsw-font-family,system-ui);font-size:11px;font-weight:600;cursor:default;vertical-align:middle;'
++        chip.style.cssText = 'display:inline-flex;align-items:center;height:18px;padding:0 6px;margin:0 2px;border-radius:9px;border:1px solid var(--dsw-alias-border-inverted);background:var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e));color:var(--dsw-alias-text-accent,#4c9aff);font-family:var(--dsw-font-family,system-ui);font-size:11px;font-weight:600;cursor:pointer;vertical-align:middle;'
+         chip.textContent = 'Annotation ' + num
+         var grace = null
+         function hide() {
+@@ -2685,6 +2713,15 @@ window.__ModuleLoader__.load({
+           el.style.top = Math.max(8, top) + 'px'
+           el.style.width = w2 + 'px'
+         })
++        chip.addEventListener('click', function (e) {
++          if (tipOwner === chip) {
++            if (e.pointerType === 'mouse') return
++            releaseActiveTip()
++            clearTip(chip)
++            return
++          }
++          chip.dispatchEvent(new MouseEvent('mouseenter'))
++        })
+         chip.addEventListener('mouseleave', hide)
+         return chip
+       }
+@@ -2834,6 +2871,7 @@ window.__ModuleLoader__.load({
+         clearSettle()
+         document.removeEventListener('selectionchange', onSelection)
+         document.removeEventListener('pointerdown', onDocPointerDown, true)
++        document.removeEventListener('pointerdown', closeTipFromOutside, true)
+         document.removeEventListener('keydown', onKeyDown, true)
+         document.removeEventListener('pointermove', onTipPointerMove, true)
+         document.removeEventListener('pointerdown', onSendPointerDown, true)
+diff --git a/node_modules/playwright b/node_modules/playwright
+new file mode 120000
+index 0000000..f270b50
+--- /dev/null
++++ b/node_modules/playwright
+@@ -0,0 +1 @@
++/Users/bytedance/.npm/_npx/e41f203b7505f1fb/node_modules/playwright
+\ No newline at end of file
+diff --git a/node_modules/playwright-core b/node_modules/playwright-core
+new file mode 120000
+index 0000000..9a357b5
+--- /dev/null
++++ b/node_modules/playwright-core
+@@ -0,0 +1 @@
++/Users/bytedance/.npm/_npx/e41f203b7505f1fb/node_modules/playwright-core
+\ No newline at end of file
+diff --git a/test/touch-chip-close-browser.mjs b/test/touch-chip-close-browser.mjs
+new file mode 100644
+index 0000000..523b341
+--- /dev/null
++++ b/test/touch-chip-close-browser.mjs
+@@ -0,0 +1,48 @@
++// Regression for #91: touch has no mouseleave, so the pending-annotation panel
++// could only be closed by switching sessions. A tap toggles it, and a tap
++// outside closes it; mouse hover behavior is unchanged.
++import assert from 'node:assert/strict'
++const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
++const browser = await chromium.launch({ channel: 'chrome', headless: true })
++try {
++  const page = await browser.newPage({ viewport: { width: 1000, height: 800 } })
++  const errors = []
++  page.on('pageerror', error => errors.push(String(error)))
++  await page.route('http://annotation.test/', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: `
++    <style>body{margin:0} [data-composer-card]{position:fixed;left:200px;bottom:24px;width:600px;height:140px;background:#fff}</style>
++    <div data-composer-card><div data-composer-input contenteditable="true"></div></div>` }))
++  await page.goto('http://annotation.test/')
++  await page.evaluate(() => {
++    localStorage.setItem('dsh.annotation.pending.v1.session', JSON.stringify([
++      { id: 'a', text: '原文', note: '批注' },
++    ]))
++    window.__ModuleLoader__ = { load(entry) { window.api = entry.factory(() => ({})) } }
++  })
++  await page.addScriptTag({ path: new URL('../client.js', import.meta.url).pathname })
++  await page.evaluate(() => {
++    window.api.apply({
++      sessions: {
++        list: { getSnapshot: () => ({ current: 'session' }), subscribe: () => () => {} },
++        scope: () => ({}),
++      },
++      locale: { getSnapshot: () => ({ active: 'zh' }), subscribe: () => () => {} },
++    })
++  })
++  const chip = page.locator('[data-annotation-chip]')
++  await chip.waitFor({ state: 'visible' })
++  const tip = page.locator('.dsh-ann-tip')
++
++  await page.evaluate(() => {
++    document.querySelector('[data-annotation-chip]')
++      .dispatchEvent(new PointerEvent('click', { pointerType: 'touch', bubbles: true }))
++  })
++  await tip.waitFor({ state: 'visible' })
++  await page.evaluate(() => {
++    document.body.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch', bubbles: true }))
++  })
++  await tip.waitFor({ state: 'hidden' })
++  assert.deepEqual(errors, [])
++  console.log('PASS: touch tap opens the pending panel; outside tap closes it (#91)')
++} finally {
++  await browser.close()
++}

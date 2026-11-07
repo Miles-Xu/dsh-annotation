@@ -58,9 +58,9 @@ test('三类面板都不再往共享容器追加监听器', () => {
   assert.doesNotMatch(source, /tipLayer\.addEventListener\('mouseleave', (bubbleHide|hide|scheduleHide)\)/)
 })
 
-test('每类面板都在 mouseenter 时登记关闭钩子', () => {
+test('每类面板在 hover 与点击打开时都登记关闭钩子', () => {
   const registrations = source.match(/tipActiveHide = \{ keep: [^}]+ \}/g) ?? []
-  assert.equal(registrations.length, 3, '三类面板各应登记一次（胶囊 / 气泡标签 / 回复芯片）')
+  assert.equal(registrations.length, 6, '三类面板各有 hover / click 两个打开入口（胶囊 / 气泡标签 / 回复芯片）')
   assert.match(source, /tipActiveHide = \{ keep: cancelHide, hide: function \(\) \{ scheduleHide\(chipLayer\) \} \}/)
   assert.match(source, /tipActiveHide = \{ keep: bubbleKeep, hide: bubbleHide \}/)
   assert.match(source, /tipActiveHide = \{ keep: keep, hide: hide \}/)

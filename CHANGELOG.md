@@ -1,17 +1,45 @@
 # Changelog
 
-## [Unreleased]
+## [1.4.14-strict.1] - 2026-11-07
+
+### 修复
+- **iOS 触摸选择后 pending 批注没有高亮（#89）**：真实触摸选择可能拿到全空锚点（`seqKey` / `rowHead` / `textOffset` / `ctxBefore` / `ctxAfter` 都为空）。此时 `locateQuote` 的全局兜底里 `ctx` 是 `{before:'', after:''}` 而不是 `null`，`ctxScore` 恒为 0，旧判据 `bestScore > 0` 把已经找到的精确文本匹配丢掉，刷新后整段高亮消失。现在空上下文时接受精确匹配；新增 `test/empty-anchor-browser.mjs`。与社区 PR #90 的判据一致，按本 fork 的代码结构重写。
+
+## [1.4.13-strict.1] - 2026-11-07
+
+### 修复
+- **发送瞬间闪出整段批注块**：宿主在发送后先渲染本地回显（`[data-submission-echo]`），回显不在 `allMessageRows` 里，旧 `decorateAll` 完全没扫它，于是先露出整段原文，等持久消息渲染后才被切掉。现在回显与插队回显（`[data-pending-steering]`）在同一个 `MutationObserver` 微任务里切块 + 贴标签，早于 paint；新增 `test/echo-decoration-browser.mjs` 固定这条路径。
+- **浅色主题不可读（#93）**：`--dsw-alias-border-inverted` 在浅色下全透明，改用 `border-l3` / `border-l4`；引用块与卡片同色，改用 `bg-module-platform`；placeholder 的 `label-dimmed` 换成 `label-tertiary`；强调色改用 `brand-primary`。
+- **触屏面板关不掉（#91）**：胶囊 / 气泡标签 / 回复芯片支持点击开关，document 级 `pointerdown` 点外部关闭；鼠标 hover 行为不变。
+
+### 移除
+- **漏答提示 + 追问整套删除**：文案、样式、`missingIndexes` / `listSeparator` / `markUnansweredAnnotations` / `nudgeUnanswered`、`test/unanswered.test.mjs` 全部移除。是否回应由用户自己看；也消除「把很久以前的批注算到本轮」的误报来源。
+
+## [1.4.12-strict.1] - 2026-10-18
 
 ### 新增
-- **漏答提示 + 追问**：最新一条助手回复里，编号没有出现在 `Annotation N:` 中的批注会在回复末尾标出「还有 N 条批注未按编号回应」，并给出「追问」按钮；按钮只把补答要求写进输入框，不自动发送。
+- **漏答提示 + 追问**：最新一条助手回复里，编号没有出现在 `Annotation N:` 中的批注会在回复末尾标出「还有 N 条批注未按编号回应」，并给出「追问」按钮；按钮只把补答要求写进输入框，不自动发送。判定基于回复芯片的 `data-annotation-index`，越界编号不计入。
 - 协议文案（zh / en / ru）收紧为「逐条单独回应，不要合并或跳过；无法回应也要保留编号说明原因」，降低模型只答一部分的概率。
 
 ### 修复
-- **带批注的回车只提交一次**：插件在 capture 阶段拼好草稿后自己 `submit('queue')`，不再把同一次 Enter 交给宿主 keymap；400ms 去重锁覆盖 keydown / pointerdown / click。修复「卡回车」和「重复发送 / 打断运行中回合」。
-- **无边框窗口拖拽（#81）**：标记层默认 `display:none`，层本体 `visibility:hidden`、高亮/编号自身 `visibility:visible`；全屏层盒不再参与命中测试，带待发送批注时也能拖标题栏。
-- **滚动高亮滞后与透明度抖动（#82）**：高亮去掉入场动画；高亮/编号节点池复用；`onLayoutChange` 在 `requestAnimationFrame` 之前同步刷新标记。真实滚轮探针从 90px 偏差 / 0.00008 透明度 / 每帧重建降到 0px / 1 / 0 次替换。
-- **排队 dock 与插队气泡**：排队预览收成「批注 ×N」标签；插队 pending echo 同步装饰；预览换行折叠时也能正确数出批注条数。
-- **漏答提示误继承旧批注**：只认紧邻的上一条用户/插队消息，普通消息后的回复不再复活旧批注、误报漏答。
+- 追问预填文案在中文下会拼成「第 Annotation 1 条」；现在中文清单只输出编号（「第 1 条」「第 1、3 条」），英文/俄文仍用 `Annotation N` 标签。
+- **回车提交改成插件自己收口（#61）**：带批注的 Enter 不再把同一次按键交给宿主。此前 `setDraft` 之后宿主 keymap 可能读到旧草稿（表现为「卡回车」），或在批注块已经拼入后再走一次 steer（表现为重复发送、打断运行中的回合）。现在 `preventDefault + stopPropagation` 后直接 `submit('queue')`，并加 400ms 去重锁，把 keydown / pointerdown / click 折叠成一次提交。运行中带批注的发送一律排队，不再触发 steer。
+- **窗口拖拽（#81）**：`[data-annotation-overlay]` 与 `[data-annotation-num-layer]` 默认 `display:none`，只在有待发送标记时由 `renderMarkers` 挂回；层本体改为 `visibility:hidden`（不是 `display:none`），高亮与编号自身 `visibility:visible`：全屏层盒不再参与命中测试，标题栏的 `-webkit-app-region: drag` 不会再被它挡住；坐标与裁剪路径完全不变，避免移动层导致的标记错位。2026-10-18 实机确认：带 2 条待发送批注时，标题栏左右拖动正常，且发送前高亮区域可见。
+- **编号层节点复用**：`numLayer` 不再每帧 `textContent = ''` 重建蓝色编号；`numNodes` 池复用节点，只更新 `left/top/textContent` 与 `__annotationItem`，点击监听只注册一次。滚动时 DOM 替换从「高亮 0 次 + 编号每帧 N 次」降到两者都为 0。
+- **排队 dock 隐藏批注块**：运行中发送带批注的消息时，宿主 `[data-queue-dock]` 的预览不再显示整段「我批注了以下…/提问：…」，而是收成问题 + 「批注 ×N」标签；由 `decorateAll` 的 MutationObserver/轮询幂等兜底。
+- **排队计数只显示 1 条**：队列预览会把换行折叠成空格，旧正则只认行首编号，第二条批注没被数进去；现在接受空白分隔且从 1 连续递增的编号，换行折叠也能数对。
+- **插队 pending echo 仍露出原文**：插队瞬间的本地 pending 气泡带 `data-pending-steering`，主循环会跳过；现在单独扫描这类节点，同样切块并贴标签，durable steering 行继续走主循环。
+- **插队瞬间先闪整段原文**：新插入的 steering/pending 节点带完整批注块时，`MutationObserver` 现在同步执行 `decorateAll`（微任务阶段，早于 paint），不再落进 120ms 合并窗口；用户不会再看到「大气泡闪一下再变小」。2026-10-18 实机确认：插队发送直接显示「批注 ×N」小气泡，无 0.3s 闪烁；滚动与插队观感均更流畅。
+- **列表滚动时高亮漂移（补充）**：只在 scroll 事件里重算 fixed 标记，遇到不产生可捕获 scroll 的列表搬运（transform / 虚拟滚动 / 合成器滚动）仍会停在上一步。现在滚轮、触摸、PageUp/Down 等滚动意图出现后，短暂开启 rAF 循环，每帧在 paint 前重算标记，空闲 2.2s 自动停止。
+- **批注标签 hover 显示旧轮次内容**：标签的 hover 面板在创建时闭包捕获了 items，宿主复用行 DOM 或标签跨消息存活时会显示旧数据（模型侧收到的仍正确）。现在每次装饰都刷新 `tag.__annotationItems`，hover 实时读取；按 `data-chat-anchor-key` 清理换行后的旧标签，发送时清掉旧悬浮面板。
+- **漏答提示误继承旧批注**：`findPrevAnnotationItems` 以前会一路往前找最近一个带批注标签的消息，导致普通消息后的回复错误继承上上条消息的批注，报出「还有 3 条批注未回应」的假警报。现在只认紧邻的上一条用户/插队消息，遇到没有标签的用户行立即返回 null。
+- **插队 / steering 消息也隐藏批注块**：此前只装饰带 `[class*="bubble"]` 的用户行，插队发送的 steering 气泡会把整段批注块原样打出来；现在 `decorateAll` 对 steering 行退回整行文本，同样切块 + 贴「批注 ×N」标签，并跳过助手行。
+- **滚动时高亮滞后与透明度抖动（#82）**：高亮不再挂 `dsh-ann-fadein` 入场动画（滚动时每帧重建会反复从 opacity 0 重播，实测 0.11–1 抖动）；`buildMarkers` 改用 `hlNodes` 池复用高亮节点，只更新 `left/top/width/height`；`onLayoutChange` 在 `requestAnimationFrame` 之前同步调用 `renderMarkers`，让 fixed 层在本帧 paint 前就拿到新坐标，消掉一帧（最多约 90px）的滞后。真实滚轮探针（`test/scroll-drift-probe.mjs`）对比 1.4.11：最大偏差 90px → 0px，透明度最低 0.00008 → 1，高亮 DOM 替换 96 次 → 0 次。
+
+### 说明
+- 本包是 `@changfenhuang/dsh-annotation@1.4.11` 的本地 fork，改名为 `dsh-annotation-strict`，与 npm 原版可以并存或随时切换；完整维护记录见 [FORK.md](./FORK.md)。
+- 包名、`cordis.patch.yml` 的 insert id，以及 `client.js` 的 bundle id / `exports.name` 必须保持一致，否则 client-modules 会报 `bundle loaded without registering`。
+- 上游更新时不要直接覆盖 `client.js`，按 FORK.md 的流程重放 [client-strict.patch](./client-strict.patch)。
 
 ## [1.4.11] - 2026-10-01
 

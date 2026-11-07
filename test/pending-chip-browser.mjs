@@ -85,6 +85,12 @@ try {
   await page.mouse.move(10, 10)
   await page.locator('.dsh-ann-tip').waitFor({ state: 'hidden' })
 
+  // Click opens the panel on pointer/touch; a pointerdown outside closes it.
+  await chip.click()
+  await page.locator('.dsh-ann-tip').waitFor({ state: 'visible' })
+  await page.mouse.click(10, 10)
+  await page.locator('.dsh-ann-tip').waitFor({ state: 'hidden' })
+
   // A queue may expand after it is mounted, without changing the input card.
   await page.evaluate(() => { document.querySelector('#queue').style.height = '96px' })
   await page.waitForTimeout(150)

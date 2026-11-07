@@ -1,0 +1,95 @@
+diff --git a/client.js b/client.js
+index c8e0c23..5762ebf 100644
+--- a/client.js
++++ b/client.js
+@@ -826,6 +826,11 @@ window.__ModuleLoader__.load({
+       var ctx = saved !== undefined && saved !== null
+         ? { before: saved.ctxBefore || '', after: saved.ctxAfter || '' }
+         : null
++      // #89：真实触摸选择（iOS Safari）可能拿到全空锚点。此时 ctx 不是 null，
++      // 而是 {before:'', after:''}，ctxScore 恒为 0；旧判据 `bestScore > 0` 会把
++      // 已经找到的精确文本匹配丢掉，高亮整段消失。空上下文时接受精确匹配。
++      var noCtx = ctx === null
++        || (saved.ctxBefore === '' && saved.ctxAfter === '')
+       var best = null
+       var bestScore = -1
+       for (var i = 0; i < rows.length; i++) {
+@@ -838,7 +843,7 @@ window.__ModuleLoader__.load({
+           if (score > bestScore) { bestScore = score; best = range }
+         }
+       }
+-      if (best !== null && (ctx === null || bestScore > 0)) return best
++      if (best !== null && (noCtx || bestScore > 0)) return best
+       var flow = document.querySelector('[data-chat-flow]')
+       if (flow === null) flow = document.querySelector('[data-focus-flow]')
+       if (flow !== null) {
+@@ -852,7 +857,7 @@ window.__ModuleLoader__.load({
+           var score2 = ctxScore(full2, positions2[q2], quote.length, ctx)
+           if (score2 > bestScore2) { bestScore2 = score2; best2 = range2 }
+         }
+-        if (best2 !== null && (ctx === null || bestScore2 > 0)) return best2
++        if (best2 !== null && (noCtx || bestScore2 > 0)) return best2
+       }
+       return null
+     }
+diff --git a/test/empty-anchor-browser.mjs b/test/empty-anchor-browser.mjs
+new file mode 100644
+index 0000000..15a7b0a
+--- /dev/null
++++ b/test/empty-anchor-browser.mjs
+@@ -0,0 +1,55 @@
++// Regression for #89 / PR #90: a real iOS touch selection can produce a pending
++// annotation whose anchor fields are all empty. locateQuote() then has
++// { before: '', after: '' } (not null), ctxScore is always 0, and the old
++// `bestScore > 0` guard discarded an exact text match — no highlight after save
++// or reload. Empty context must accept the exact match.
++import assert from 'node:assert/strict'
++const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
++const browser = await chromium.launch({ channel: 'chrome', headless: true })
++try {
++  const page = await browser.newPage({ viewport: { width: 1000, height: 800 } })
++  const errors = []
++  page.on('pageerror', error => errors.push(String(error)))
++  await page.route('http://annotation.test/', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: `
++    <style>
++      body { margin:0; font-family:system-ui }
++      #quote { position:absolute; left:260px; top:280px; width:480px; }
++      [data-composer-card] { position:fixed; left:200px; bottom:24px; width:600px; height:140px; background:#fff; }
++    </style>
++    <div data-chat-flow-kind="assistant-step"><p id="quote">触摸选择后保存的原文，锚点字段全空。</p></div>
++    <div data-composer-card><div data-composer-input contenteditable="true"></div></div>` }))
++  await page.goto('http://annotation.test/')
++  await page.evaluate(() => {
++    localStorage.setItem('dsh.annotation.pending.v1.session', JSON.stringify([{
++      id: 'touch-1',
++      text: '触摸选择后保存的原文，锚点字段全空。',
++      note: '空锚点',
++      seqKey: '',
++      rowHead: '',
++      textOffset: -1,
++      ctxBefore: '',
++      ctxAfter: '',
++    }]))
++    window.__ModuleLoader__ = { load(entry) { window.api = entry.factory(() => ({})) } }
++  })
++  await page.addScriptTag({ path: new URL('../client.js', import.meta.url).pathname })
++  await page.evaluate(() => {
++    window.dispose = window.api.apply({
++      sessions: {
++        list: { getSnapshot: () => ({ current: 'session' }), subscribe: () => () => {} },
++        scope: () => ({}),
++      },
++      conversation: { input: { for: () => ({ state: { getSnapshot: () => ({ draft: '' }), subscribe: () => () => {} } }) } },
++      locale: { getSnapshot: () => ({ active: 'zh' }), subscribe: () => () => {} },
++    })
++  })
++  await page.locator('[data-annotation-chip]').waitFor({ timeout: 3000 })
++  await page.evaluate(() => window.dispatchEvent(new Event('resize')))
++  await page.locator('.dsh-ann-hl').first().waitFor({ timeout: 3000 })
++  assert.ok(await page.locator('.dsh-ann-hl').count() > 0, 'empty anchors still render a highlight')
++  assert.match(await page.locator('[data-annotation-chip]').textContent(), /1/)
++  assert.deepEqual(errors, [])
++  console.log('PASS: empty-anchor touch selection renders its highlight (#89)')
++} finally {
++  await browser.close()
++}

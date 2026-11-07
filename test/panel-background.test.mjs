@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const source = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
-const background = 'var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #2c2c2e))'
+const background = 'var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-layer-2, #2c2c2e))'
 
 test('annotation surfaces use solid theme layers without menu alpha (issue #69)', () => {
   assert.doesNotMatch(source, /--dsw-specific-menu|color-mix\(/)
